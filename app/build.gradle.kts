@@ -75,3 +75,17 @@ android {
 dependencies {
     testImplementation("junit:junit:4.13.2")
 }
+
+// ---- TV fork ----------------------------------------------------------------------------------------------------
+// In its own block so upstream changes to the one above merge without conflicts.
+// - UPDATE_REPO: Updates reads this fork's releases (CI: the repo it runs in; locally: updateRepo in
+//   gradle.properties). Upstream's builds are signed with another key, so they could not install over these.
+// - TV_BUILD (CI's run number) makes the version 1.6.0.<run>, so each CI build is newer than the last for Updates.
+android {
+    buildFeatures { buildConfig = true }
+    defaultConfig {
+        val repo = System.getenv("GITHUB_REPOSITORY") ?: (findProperty("updateRepo") as String?) ?: "aradhyas8/Plume_Launcher"
+        buildConfigField("String", "UPDATE_REPO", "\"$repo\"")
+        System.getenv("TV_BUILD")?.let { versionNameSuffix = ".0.$it" }
+    }
+}

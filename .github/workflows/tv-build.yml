@@ -1,0 +1,94 @@
+# This fork: build Plume and RAM Clean, signed with the TV's key, and publish them as a release on every push to
+# main. Plume's own Updates screen reads this repo's releases (TvDefaults.UPDATE_REPO), so the TV can update
+# itself. Pull requests (including the upstream-sync one) get the APKs as artifacts to try first.
+#
+# Secrets (Settings > Secrets and variables > Actions), from the keystore that signed the APKs already on the TV:
+#   SIGNING_KEYSTORE_B64  the .keystore file, base64        SIGNING_STORE_PASSWORD  its password
+#   SIGNING_KEY_ALIAS     the key's alias                   SIGNING_KEY_PASSWORD    the key's password
+# Without them the build still runs, signed with a throwaway key, and nothing is released.
+name: TV build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tv-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TV_BUILD: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Android SDK pieces for RAM Clean
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+
+      - name: Signing key
+        id: key
+        env:
+          KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+          STORE_PASS: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          ks="$RUNNER_TEMP/tv.keystore"
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$ks"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            keytool -genkeypair -keystore "$ks" -storepass android -keypass android -alias throwaway \
+              -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=throwaway" 2>/dev/null
+            STORE_PASS=android ALIAS=throwaway KEY_PASS=android
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No signing secrets: built with a throwaway key, nothing will be released."
+          fi
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$ks" "$STORE_PASS" "$ALIAS" "$KEY_PASS" > keystore.properties
+          { echo "KEYSTORE=$ks"; echo "KEYSTORE_PASS=$STORE_PASS"; echo "KEY_ALIAS=$ALIAS"; echo "KEY_PASS=$KEY_PASS"; } >> "$GITHUB_ENV"
+
+      - name: Build Plume
+        run: ./gradlew assembleRelease
+
+      - name: Build RAM Clean
+        run: bash tv-setup/ramclean/build.sh
+
+      - name: Collect APKs
+        id: out
+        run: |
+          base=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts | head -1)
+          echo "version=$base.0.$TV_BUILD" >> "$GITHUB_OUTPUT"
+          mkdir out
+          cp app/build/outputs/apk/release/app-release.apk out/Plume.apk
+          cp tv-setup/ramclean/RAM-Clean.apk out/RAM-Clean.apk
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apks-${{ steps.out.outputs.version }}
+          path: out/*.apk
+
+      - name: Release
+        if: github.event_name == 'push' && steps.key.outputs.signed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.out.outputs.version }}
+        run: |
+          gh release create "v$VERSION" out/Plume.apk out/RAM-Clean.apk --target "$GITHUB_SHA" \
+            --title "Plume TV $VERSION" \
+            --notes "Built from $GITHUB_SHA. On the TV: Plume settings > Updates, or run tv-setup/setup-tv.ps1."

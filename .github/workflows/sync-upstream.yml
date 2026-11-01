@@ -1,0 +1,116 @@
+# Every day: when upstream Plume (aradhyas8/Plume_Launcher) has commits this fork doesn't, open (or update) a pull
+# request "Sync upstream Plume" from the branch upstream-sync into main. Merging it brings in upstream's fixes;
+# the TV build then releases a new version and the TV's Updates screen offers it.
+#
+# - Merges cleanly: upstream-sync is main with upstream merged in, built and unit-tested here first, and the
+#   result is written in the pull request.
+# - Conflicts (upstream changed a line this fork also changed): upstream-sync is upstream's main as it is, and the
+#   pull request lists the files to resolve, in GitHub's conflict editor or locally.
+# A pull request opened with the workflow token doesn't start other workflows, so this job runs the checks itself.
+name: Sync upstream Plume
+
+on:
+  schedule:
+    - cron: '30 2 * * *'   # 08:00 in India
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-upstream
+
+env:
+  UPSTREAM: https://github.com/aradhyas8/Plume_Launcher.git
+  BRANCH: upstream-sync
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Anything new upstream?
+        id: new
+        run: |
+          git remote add upstream "$UPSTREAM"
+          git fetch --quiet upstream main
+          n=$(git rev-list --count HEAD..upstream/main)
+          echo "count=$n" >> "$GITHUB_OUTPUT"
+          echo "Upstream commits not in main: $n"
+          git log --oneline HEAD..upstream/main | head -40 > "$RUNNER_TEMP/commits.txt"
+
+      - name: Merge
+        id: merge
+        if: steps.new.outputs.count != '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          if git merge --no-edit -m "Merge upstream Plume" upstream/main; then
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+          else
+            git diff --name-only --diff-filter=U > "$RUNNER_TEMP/conflicts.txt"
+            git merge --abort
+            git reset --hard upstream/main
+            echo "clean=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-java@v5
+        if: steps.merge.outputs.clean == 'true'
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v5
+        if: steps.merge.outputs.clean == 'true'
+
+      - name: Unit tests and release build of the merge
+        id: check
+        if: steps.merge.outputs.clean == 'true'
+        continue-on-error: true
+        run: ./gradlew testDebugUnitTest lintDebug assembleRelease
+
+      - name: Push and open the pull request
+        if: steps.new.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COUNT: ${{ steps.new.outputs.count }}
+          CLEAN: ${{ steps.merge.outputs.clean }}
+          CHECK: ${{ steps.check.outcome }}
+        run: |
+          git push --force origin "$BRANCH"
+          {
+            echo "Upstream Plume has **$COUNT** new commit(s) that this fork doesn't have yet."
+            echo
+            if [ "$CLEAN" = true ]; then
+              if [ "$CHECK" = success ]; then
+                echo "✅ Merges cleanly, and unit tests, lint and the release build pass. Safe to merge."
+              else
+                echo "⚠️ Merges cleanly, but unit tests, lint or the build failed: see the run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID before merging."
+              fi
+            else
+              echo "⚠️ **Conflicts**: upstream changed lines this fork also changed. Resolve them (GitHub's *Resolve conflicts* button, or locally) and keep this fork's changes:"
+              echo
+              sed 's/^/- `/; s/$/`/' "$RUNNER_TEMP/conflicts.txt"
+            fi
+            echo
+            echo "After merging, **TV build** releases a new version; on the TV: Plume settings > Updates."
+            echo
+            echo "<details><summary>New upstream commits</summary>"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/commits.txt"
+            echo '```'
+            echo "</details>"
+          } > "$RUNNER_TEMP/body.md"
+          if gh pr view "$BRANCH" --json state -q .state 2>/dev/null | grep -q OPEN; then
+            gh pr edit "$BRANCH" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh pr create --base main --head "$BRANCH" --title "Sync upstream Plume" --body-file "$RUNNER_TEMP/body.md"
+          fi

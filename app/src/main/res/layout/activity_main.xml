@@ -92,6 +92,20 @@
                     android:visibility="gone" />
             </LinearLayout>
 
+            <!-- "● RAM 52%  ↓ 2.4 MB/s  VPN off", lit on focus like the icons; OK opens RAM Clean (see Stats). -->
+            <TextView
+                android:id="@+id/stats"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:layout_marginEnd="12dp"
+                android:focusable="true"
+                android:fontFamily="sans-serif"
+                android:gravity="center_vertical"
+                android:maxLines="1"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:textSize="14sp" />
+
             <ImageView
                 android:id="@+id/wifi"
                 android:layout_width="36dp"

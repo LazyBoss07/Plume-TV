@@ -105,7 +105,7 @@ import java.util.concurrent.Executors
 import org.json.JSONObject
 
 /** Light/dark from the launcher's theme setting; shared with the Gallery screensaver. */
-internal fun prefersDark(prefs: SharedPreferences) = when (prefs.getString("theme", "light")) {
+internal fun prefersDark(prefs: SharedPreferences) = when (prefs.getString("theme", TvDefaults.THEME)) {
     "dark" -> true
     "auto" -> autoDark(sunPlace(prefs), System.currentTimeMillis(), Calendar.getInstance().get(Calendar.HOUR_OF_DAY))
     else -> false
@@ -250,7 +250,7 @@ internal fun isBannerStyle(style: String) = style.startsWith("banner")
 
 /** The style a stored choice means. Before styles, Colour was an on/off setting ([oldColour]): it decides until a style is picked. */
 internal fun iconStyleOf(stored: String?, oldColour: Boolean) =
-    stored?.takeIf { it in ICON_STYLE_KEYS } ?: if (oldColour) "colour" else "mono"
+    stored?.takeIf { it in ICON_STYLE_KEYS } ?: if (oldColour) "colour" else TvDefaults.ICON_STYLE
 
 /** Allowed to start an activity from the background because the Home button service is bound. */
 class Updated : BroadcastReceiver() {
@@ -412,6 +412,20 @@ class MainActivity : Activity() {
             setOnClickListener { action() }
             setOnLongClickListener { if (!holdFired) fireHold(this); true } // hold OK: move, hide or add icons
         }
+        // RAM · speed · VPN pill left of the network icon: lit on focus like the icons, OK opens RAM Clean.
+        findViewById<TextView>(R.id.stats).apply {
+            setTextColor(fg)
+            val pill = GradientDrawable().apply { cornerRadius = dp(18).toFloat() }
+            background = pill
+            setOnFocusChangeListener { v, focused ->
+                if (focused) lastTop = v
+                pill.setColor(if (!focused) 0 else if (dark) DARK_CARD_LIT[0] else Color.WHITE)
+                setTextColor(if (focused) fg else iconInk)
+                animate().scaleX(if (focused) 1.08f else 1f).scaleY(if (focused) 1.08f else 1f)
+                    .setDuration(160).setInterpolator(DECELERATE).start()
+            }
+            setOnClickListener { openRamClean() }
+        }
         if (fakeSetup(intent)) {
             // debug: setup for a pretend TV already started
         } else if (prefs.getBoolean("reopen_settings", false)) {
@@ -465,6 +479,9 @@ class MainActivity : Activity() {
         showWeather()
         ui.removeCallbacks(weatherTick)
         ui.post(weatherTick)
+        stats.reset()
+        ui.removeCallbacks(statsTick)
+        ui.post(statsTick)
         ui.postDelayed(themeTick, 60_000L)
         ui.removeCallbacks(wallpaperTick)
         ui.post(wallpaperTick)
@@ -475,6 +492,23 @@ class MainActivity : Activity() {
         Bing.onChanged = bingChanged
         Bing.refresh(applicationContext, prefs)
         ui.post { updateBadge() } // after layout, so the icon has its size
+    }
+
+    private val stats by lazy { Stats(applicationContext) }
+    private val statsTick = object : Runnable {
+        override fun run() {
+            findViewById<TextView>(R.id.stats).text = stats.line()
+            ui.postDelayed(this, Stats.TICK_MS)
+        }
+    }
+
+    private fun openRamClean() {
+        try {
+            startActivity(Intent().setClassName(Stats.RAM_CLEAN, "${Stats.RAM_CLEAN}.CleanActivity")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: Exception) {
+            toast("Install RAM Clean to close background apps")
+        }
     }
 
     /** Auto theme flips at sunrise and sunset (or 7:00 and 19:00) even while the home screen just sits there. */
@@ -506,6 +540,7 @@ class MainActivity : Activity() {
         findViewById<ImageView>(R.id.wallpaper).alpha = 1f
         ui.removeCallbacks(refreshIfDirty)
         ui.removeCallbacks(weatherTick)
+        ui.removeCallbacks(statsTick)
         ui.removeCallbacks(themeTick)
         ui.removeCallbacks(wallpaperTick)
         if (editing) endEdit()
@@ -933,6 +968,7 @@ class MainActivity : Activity() {
         }
         iconInk = fg
         for (v in topIcons()) v.setColorFilter(if (v.isFocused) fg else iconInk)
+        findViewById<TextView>(R.id.stats).setTextColor(fg)
         watchInk = fg
     }
 
@@ -955,6 +991,7 @@ class MainActivity : Activity() {
         val icons = topIcons()
         iconInk = inkBehind(icons)
         for (v in icons) if (!v.isFocused) v.setColorFilter(iconInk)
+        findViewById<TextView>(R.id.stats).let { if (!it.isFocused) it.setTextColor(iconInk) }
         val apps = listOf(R.id.appsTitle, R.id.rowLabel).map { findViewById<TextView>(it) }
         val appsInk = inkBehind(apps)
         for (v in apps) ink(v, appsInk, fade = true)
@@ -2030,7 +2067,7 @@ class MainActivity : Activity() {
      * main list. Rows are found by name, so adding one never moves the others.
      */
     private fun renderSettings(at: Int = 0) {
-        val theme = prefs.getString("theme", "light")!!
+        val theme = prefs.getString("theme", TvDefaults.THEME)!!
         val sort = prefs.getString("sort", "manual")!!
         val hidden = prefs.getStringSet("hidden_watch", emptySet())!!.size
         val weather = prefs.getString("weather", "off")!!
@@ -2046,6 +2083,11 @@ class MainActivity : Activity() {
                 prefs.edit().putString("icon_style", ICON_STYLES.keys.toList().step(iconStyle(), d)).apply()
                 renderApps()
                 renderSettings(R.string.icon_style)
+            },
+            R.string.selected_size to { d ->
+                prefs.edit().putString("lift", LIFTS.step(liftKey(), d)).apply()
+                renderApps()
+                renderSettings(R.string.selected_size)
             },
             R.string.theme to { d ->
                 prefs.edit().putString("theme", listOf("light", "dark", "auto").step(theme, d)).putBoolean("reopen_settings", true).apply()
@@ -2139,6 +2181,9 @@ class MainActivity : Activity() {
             R.string.icon_style to Triple(getString(R.string.icon_style), getString(ICON_STYLES.getValue(iconStyle()))) {
                 steps[R.string.icon_style]!!(1)
             },
+            R.string.selected_size to Triple(getString(R.string.selected_size), "${liftKey()}×") {
+                steps[R.string.selected_size]!!(1)
+            },
             R.string.restore_hidden to Triple(getString(R.string.restore_hidden), if (hidden == 0) getString(R.string.none_hidden) else resources.getQuantityString(R.plurals.show_again, hidden, hidden)) {
                 prefs.edit().remove("hidden_watch").apply()
                 watchKey = null
@@ -2223,7 +2268,8 @@ class MainActivity : Activity() {
             Triple(R.string.section_clock_weather, if (weather == "off") on(false) else "${rows[R.string.weather_units]!!.second} · ${rows[R.string.weather_location]!!.second}",
                 listOf(R.string.weather, R.string.weather_units, R.string.weather_location)),
             Triple(R.string.section_app_row, "${rows[R.string.apps_in_row]!!.second} · ${rows[R.string.row_position]!!.second}",
-                listOf(R.string.edit_apps_row, R.string.apps_in_row, R.string.sort_apps, R.string.icon_style, R.string.app_names, R.string.row_position)),
+                listOf(R.string.edit_apps_row, R.string.apps_in_row, R.string.sort_apps, R.string.icon_style, R.string.selected_size,
+                    R.string.app_names, R.string.row_position)),
             // "Apps when row hides" only means something once the row can hide.
             Triple(R.string.bottom_row, rowName(), listOfNotNull(R.string.show_row, R.string.apps_when_hidden.takeIf { rowShow() != "always" },
                 R.string.row_name, R.string.show_icons, R.string.cw_apps, R.string.cw_channels, R.string.restore_hidden)),
@@ -2935,6 +2981,9 @@ class MainActivity : Activity() {
     private fun rowNames() = prefs.getString("names", "focus")!!
 
     /** "mono", "colour" or "banner". The old on/off "colour_icons" decides until a style has been picked. */
+    /** How much the selected app tile grows, as a LIFTS entry; 1.08 was Plume's original. */
+    private fun liftKey() = prefs.getString("lift", null)?.takeIf { it in LIFTS } ?: TvDefaults.LIFT
+
     private fun iconStyle() = iconStyleOf(prefs.getString("icon_style", null), prefs.getBoolean("colour_icons", false))
 
     private fun colourIcons() = iconStyle().let { it == "colour" || it == "banner" } // a monochrome banner row keeps the marks grey too
@@ -2996,12 +3045,24 @@ class MainActivity : Activity() {
             tag = a.pkg
             setOnClickListener { launch(a) }
         }
-        style(col, dp(8), card = false, lift = 1.12f) { focused ->
+        style(col, dp(8), card = false, lift = liftKey().toFloat()) { focused -> // Apps row > Selected app size
             ring.animate().alpha(if (focused) 1f else 0f).setDuration(160).start()
             if (!grey) dim.animate().alpha(if (focused) 0f else BANNER_DIM).setDuration(160).start()
             if (!grey) return@style
             pic.colorFilter = if (focused) null else GREYSCALE
             pic.animate().alpha(if (focused) 1f else rest).setDuration(160).start()
+        }
+        // Its lift shadow drawn white in dark mode, so the selected banner glows on the black ground (a dark
+        // shadow can't be seen there), and lifted higher than a card so the glow reaches past the ring.
+        if (Build.VERSION.SDK_INT >= 28) { // shadow colours are Android 9+; older sets keep the plain shadow
+            val glow = if (dark) Color.WHITE else Color.BLACK
+            col.outlineSpotShadowColor = glow
+            col.outlineAmbientShadowColor = glow
+        }
+        val lift = col.onFocusChangeListener
+        col.setOnFocusChangeListener { v, focused ->
+            lift.onFocusChange(v, focused)
+            col.animate().translationZ(if (focused) dp(24).toFloat() else 0f).setDuration(160).start()
         }
         return col
     }
@@ -3107,7 +3168,7 @@ class MainActivity : Activity() {
         val restText = if (dark) 0.65f else 1f
         img.alpha = restLogo
         text?.alpha = restText
-        style(col, dp(8), card = true) { focused ->
+        style(col, dp(8), card = true, lift = liftKey().toFloat()) { focused -> // Apps row > Selected app size
             text?.setActive(focused) // a name too wide for the tile scrolls while it is selected
             if (!dark) return@style
             img.animate().alpha(if (focused) 1f else restLogo).setDuration(160).start()
@@ -3263,8 +3324,17 @@ class MainActivity : Activity() {
             v.parent === wifi.parent -> when (key) { // top bar
                 KeyEvent.KEYCODE_DPAD_DOWN -> apps ?: cards ?: v // the apps row can be empty (all hidden)
                 KeyEvent.KEYCODE_DPAD_UP -> v
-                KeyEvent.KEYCODE_DPAD_LEFT -> if (v.id == shownTop().first()) v else null
-                KeyEvent.KEYCODE_DPAD_RIGHT -> if (v.id == shownTop().last()) v else null
+                // The RAM pill is the bar's left end, just before the first icon.
+                KeyEvent.KEYCODE_DPAD_LEFT -> when (v.id) {
+                    R.id.stats -> v
+                    shownTop().first() -> findViewById(R.id.stats)
+                    else -> null
+                }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> when (v.id) {
+                    R.id.stats -> findViewById(shownTop().first())
+                    shownTop().last() -> v
+                    else -> null
+                }
                 else -> null
             }
             v.parent === appRow -> when (key) {
@@ -3311,6 +3381,7 @@ class MainActivity : Activity() {
                 closeAllApps()
                 appRow.getChildAt(0)?.requestFocus() // show the app just pinned
             }
+            v.id == R.id.stats -> openRamClean() // the RAM pill can't be moved or hidden like the icons
             v.parent === wifi.parent -> topMenu(v)
             v.parent === appRow -> appMenu(v)
             v.getTag(R.id.watchRow) is Prog -> watchMenu(v, v.getTag(R.id.watchRow) as Prog)
@@ -4792,6 +4863,8 @@ class MainActivity : Activity() {
         const val SCRIM_ALPHA = 0x99 // the settings panel's dim over the home screen
         const val AREA_ALL = 0
         const val AREA_CLOCK = 1
+        /** Apps row > Selected app size choices: how much the selected tile grows. */
+        val LIFTS = listOf("1.08", "1.15", "1.2", "1.3", "1.4", "1.5")
         const val AREA_APPS = 2
         const val AREA_SHOWS = 3
         /** The part of the home screen each section changes, lit by the spotlight; other sections dim it all. */
@@ -4814,6 +4887,7 @@ class MainActivity : Activity() {
             R.string.wp_dim to R.string.help_wp_dim, R.string.fade_top to R.string.help_fade_top, R.string.fade_bottom to R.string.help_fade_bottom, R.string.weather_location to R.string.help_location,
             R.string.edit_apps_row to R.string.help_rearrange, R.string.apps_in_row to R.string.help_choose_apps,
             R.string.sort_apps to R.string.help_order, R.string.icon_style to R.string.help_icon_style,
+            R.string.selected_size to R.string.help_selected_size,
             R.string.apps_when_hidden to R.string.help_apps_when_hidden, R.string.row_name to R.string.help_row_name,
             R.string.show_icons to R.string.help_show_icons,
             R.string.cw_apps to R.string.help_from_apps, R.string.cw_channels to R.string.help_channels,
@@ -4866,7 +4940,7 @@ class MainActivity : Activity() {
             60 to R.string.every_60, 1440 to R.string.every_1440,
         )
         const val CHOSEN = "✓"
-        const val REPO = "aradhyas8/Plume_Launcher"
+        const val REPO = TvDefaults.UPDATE_REPO // this fork's releases, not upstream's (signed with another key)
         const val UPDATE_STATUS = "dev.plume.UPDATE_STATUS"
         const val WRITE_EPG ="com.android.providers.tv.permission.WRITE_EPG_DATA"
         const val TV_SETTINGS = "com.android.tv.settings"

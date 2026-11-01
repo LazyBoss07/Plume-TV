@@ -25,12 +25,12 @@ class IconStyleTest {
         assertEquals("colour", iconStyleOf(null, oldColour = true))
     }
 
-    @Test fun noChoiceMeansMonochrome() {
-        assertEquals("mono", iconStyleOf(null, oldColour = false))
+    @Test fun noChoiceMeansMonochrome() { // TV fork: the default is TvDefaults.ICON_STYLE (upstream: "mono")
+        assertEquals(TvDefaults.ICON_STYLE, iconStyleOf(null, oldColour = false))
     }
 
     @Test fun anUnknownStyleFallsBackToTheOldSetting() {
-        assertEquals("mono", iconStyleOf("glass", oldColour = false))
+        assertEquals(TvDefaults.ICON_STYLE, iconStyleOf("glass", oldColour = false))
         assertEquals("colour", iconStyleOf("glass", oldColour = true))
     }
 }

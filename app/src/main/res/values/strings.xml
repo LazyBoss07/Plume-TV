@@ -80,6 +80,7 @@
     <string name="always">Always</string>
     <string name="never">Never</string>
     <string name="icon_style">Icon style</string>
+    <string name="selected_size">Selected app size</string>
     <string name="colour">Colour</string>
     <string name="monochrome">Monochrome</string>
     <string name="banner">Banner</string>
@@ -206,6 +207,7 @@
     <string name="help_choose_apps">Choose the apps in the row. The others stay in All apps.</string>
     <string name="help_order">Manual keeps your order. Most used puts the apps you open most at the start.</string>
     <string name="help_icon_style">Press ‹ › to try each style. The row changes while you press.</string>
+    <string name="help_selected_size">Press ‹ › to choose how much the selected app grows. 1.08× was Plume\'s original.</string>
     <string name="help_apps_when_hidden">When the shows row hides, the apps stay in place or move down.</string>
     <string name="help_show_icons">The small app icon on each card. Colour shows it in the app\'s own colour.</string>
     <string name="help_row_name">The name above the row. Automatic uses the name your apps give it.</string>
