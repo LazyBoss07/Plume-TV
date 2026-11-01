@@ -84,7 +84,7 @@ jobs:
           path: out/*.apk
 
       - name: Release
-        if: github.event_name == 'push' && steps.key.outputs.signed == 'true'
+        if: github.event_name != 'pull_request' && steps.key.outputs.signed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.out.outputs.version }}
